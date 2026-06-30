@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 function isWebGLAvailable(): boolean {
@@ -13,13 +13,35 @@ function isWebGLAvailable(): boolean {
   }
 }
 
+// Detect mobile or Safari browsers to apply stricter memory and performance bounds
+function isMobileOrSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent.toLowerCase();
+  const isSafari = ua.includes("safari") && !ua.includes("chrome") && !ua.includes("android");
+  const isMobile = /iphone|ipad|ipod|android|blackberry|mini|windows\sphone/i.test(ua);
+  return isSafari || isMobile;
+}
+
 export default function ThreeBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [webglHealthy, setWebGLHealthy] = useState(true);
+
+  if (!webglHealthy) {
+    return null;
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (!isWebGLAvailable()) return; // graceful no-op in headless/GPU-less envs
+
+    // Set up WebGL context loss listener to prevent hard browser reloads/crashes
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      console.warn("WebGL context lost. Gracefully disabling 3D background to prevent Safari crash.");
+      setWebGLHealthy(false);
+    };
+    canvas.addEventListener("webglcontextlost", handleContextLost);
 
     const W = window.innerWidth;
     const H = window.innerHeight;
@@ -29,9 +51,13 @@ export default function ThreeBackground() {
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
     } catch {
+      setWebGLHealthy(false);
       return; // WebGL context creation failed — silently degrade
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+
+    // Limit pixel ratio on mobile/Safari to cut rendering load by >50% while maintaining crispness
+    const pixelRatioCap = isMobileOrSafari() ? 1.0 : 1.5;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap));
     renderer.setSize(W, H);
     renderer.setClearColor(0x000000, 0);
 
@@ -236,7 +262,8 @@ export default function ThreeBackground() {
     };
 
     const notes: NoteSpec[] = [];
-    const notesCount = 160; // Gantikan sebagian titik bintang dengan not balok agar terlihat lebih banyak
+    const isMobile = isMobileOrSafari();
+    const notesCount = isMobile ? 30 : 70; // Optimized note count for smoother performance and less memory footprint
     const noteColors = ["#E4A390", "#D49C68", "#8A4F55"];
 
     for (let i = 0; i < notesCount; i++) {
@@ -449,6 +476,7 @@ export default function ThreeBackground() {
       cancelAnimationFrame(rafId);
       window.removeEventListener("mousemove", onMouse);
       window.removeEventListener("resize", onResize);
+      canvas.removeEventListener("webglcontextlost", handleContextLost);
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh || obj instanceof THREE.Points || obj instanceof THREE.LineSegments || obj instanceof THREE.Sprite) {
           obj.geometry?.dispose();
